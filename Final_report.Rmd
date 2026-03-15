@@ -1,0 +1,392 @@
+---
+title: "STA 141A:  Predicting Wildfire Incidence in the United States"
+author:  Abirami Valliammai Kathiresan
+output: html_document
+---
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Overview
+
+The goal of this final project is to develop a prediction model for the incidence and location of notable wildfires in the United States ([link](https://www.kaggle.com/datasets/rtatman/188-million-us-wildfires/data)). You will use historical wildfire records to estimate the probability that a wildfire will occur in a given geographic area during a future month.
+
+A full modeling pipeline is expected, including:
+- Careful problem formulation and data preprocessing  
+- Exploratory analysis to motivate modeling choices  
+- Predictive modeling with appropriate validation  
+- Clear interpretation and communication of results  
+
+Students are expected to submit a final written report, organized according to the sections described below. Each student is expected to write their own reproducible report, but discussion is encouraged. 
+
+---
+
+## Data and background
+
+You can find and download a subset of historical wildfire records derived from the Kaggle dataset *“188 Million US Wildfires”*. The dataset includes wildfire ignition locations, discovery dates, containment dates, and final burned area across the contiguous United States. You are encouraged, but not required, to use the full dataset from the original source. 
+
+Wildfires vary widely in size, and the vast majority of recorded fires are very small and quickly contained. Modeling all recorded fires would lead to extreme class imbalance and would obscure the dynamics of fires that are operationally and scientifically meaningful.
+
+To address this, you may filter the raw wildfire records to retain only “notable” fires. A recommended cutoff is to retain only the wildfires with final burned area $\geq$ 300 acres.  This threshold is consistent with operational wildfire reporting standards used by U.S. fire management agencies, where *large wildland fires* are commonly defined as: $\geq$ 100 acres in timber fuel models, or  $\geq$ 300 acres in grass or brush fuel models  
+
+**Alternative Cutoffs.** You may choose an alternative cutoff  if you clearly justify your choice. Any alternative cutoff must be clearly justified in writing and applied consistently throughout the project.  
+
+---
+
+## Prediction Task
+
+The prediction task is formulated as a binary classification problem with spatial and temporal structure.
+
+- **Outcome**  
+  For each spatial unit and month, define a binary variable indicating whether at least one notable wildfire occurs during that month.
+
+- **Spatial unit**  
+  You may choose an appropriate spatial unit (e.g., grid cells, counties, or other geographic partitions). The choice should balance spatial resolution, interpretability, and data sparsity. 
+
+- **Temporal unit**  
+  Month. You may refine your resolution to week or day with clear justification. 
+
+- **Predictors**  
+  You may select any variables in the dataset as your predictors. External data sources (e.g., weather or land cover) are allowed but not required.
+
+
+---
+
+## Report Structure and Required Sections
+
+
+Your final report must contain an **abstract** and the following **five** sections. 
+Each section should combine clear explanation, appropriate visual or tabular outputs, and interpretation. 
+
+You may add an optional Introduction or Background section to improve the exposition of the report. 
+
+```{r}
+#Loading necessary libraries
+library(tidyverse)
+library(maps) # for map data
+library(lubridate) # for working with dates
+library(viridis) # for color scales
+library(slider)
+```
+
+### Abstract
+
+
+### 1. Data Preprocessing
+
+The data preprocessing portion of this report will focus on transforming the raw wildfire data into a data set that is clean, structured, and usable for the necessary tasks. For instance, the spatial and temporal units will be clearly defined, notable fires will be identified, the binary outcome variable is fixed, and missing or unusual data is handled. The final data set will ensure that there is one roch for each grid cell and month as well as a binary outcome. 
+
+## Load Data
+Firstly, the data is loaded with several key variables:
+FIRE_YEAR: Calendar year when the fire was discovered
+DISCOVERY_DOY: The day of the year when the fire was discovered
+FIRE_SIZE: The final size of the fire in acres
+LATITUDE & LONGITUDE: The ignition location in decimal degrees
+STATE: State in which the fire burned 
+```{r}
+wildfires <-read.csv(file = "./Data/wildfires_sample_100k.csv") %>% 
+  select(FIRE_YEAR, DISCOVERY_DOY, FIRE_SIZE, LATITUDE, LONGITUDE, STATE) %>%
+  mutate(STATE = as.factor(STATE))
+
+glimpse(wildfires)
+
+```
+
+
+## Temporal Patterns
+FIRE_YEAR and DISCOVERY_DOY will be converted to FIRE_DATE in order to extract the year and month of the fire for later analysis.
+```{r}
+#Create the FIRE_DATE variable and extract the year and month 
+fires <- wildfires %>% 
+    mutate(FIRE_DATE = as.Date(paste(FIRE_YEAR, DISCOVERY_DOY, sep = "-"), format = "%Y-%j"),
+          YEAR = year(FIRE_DATE),
+          MONTH = month(FIRE_DATE))
+
+```
+
+## Notable Fire Threshold
+The original wildfire dataset has rows of information with fires of various sizes, but  a majority of those fires are small in size and insignificant. Therefore, to ensure that these small fires will not obscure meaningful fire data or introduce a class imbalance, the data set has been reduced to notable fires, which have burned for 300 acres or more. Similarly, U.S. fire management agencies define large fires as 100 acres for timber fuel models and 300 acres for grass or brush fuel models. Therefore, all wildfire records that contain `FIRE_SIZE` >= 300 acres will be kept in the data set for analysis.
+
+```{r}
+#Define notable fire threshold
+notable_threshold_acres <- 300
+
+#filter dataset to only notable fires
+notable_fires <- fires %>%
+  filter(FIRE_SIZE >= notable_threshold_acres)
+
+cat("Number of notable fires:", nrow(notable_fires))
+```
+
+##Spatial Patterns
+The spatial units that will be used are a latitude-longitude 1° × 1° grid. Event-level fire records will be converted into a grid and month summary with a binary indicator. The 1° × 1° latitude-longitude grid cells will be used along with months for the time-space units because the grid ensures that the spatial units are consistent and specific, rather than a larger spacial unit like State, which is more general and broad. Also, due to reporting errors, latitude and longitude pairs might not be accurate, so the grid will smooth out the noise and capture the wildfire activity in that cell rather than the precise locations.
+
+```{r}
+#Creating grid IDs and month index
+notable_fires <- notable_fires %>%
+  mutate(
+    lat_bin = floor(LATITUDE),
+    lon_bin = floor(LONGITUDE),
+    ym = YEAR * 100 + MONTH   # e.g., 201507
+  )
+
+#Fire indicator at (grid, month)
+grid_month_fire <- notable_fires %>%
+  group_by(lat_bin, lon_bin, ym) %>%
+  summarise(n_fires = n(), fire_this_month = 1, .groups = "drop")
+
+head(grid_month_fire)
+```
+
+Additionally, a complete (grid, month) panel will be created that indicates the outcome of whether a fire occurred or not. There will be a balanced panel with the grid cells that have at least one notable fire in grid_month_fire and all the months within the given year, or the range of ym. 
+
+```{r}
+#Building the panel of all grid cells that appear at least once
+all_grids <- grid_month_fire %>% distinct(lat_bin, lon_bin)
+
+#Generating a safe monthly sequence using actual dates
+start_date <- ymd(paste0(min(grid_month_fire$ym) %/% 100, "-", min(grid_month_fire$ym) %% 100, "-01"))
+end_date   <- ymd(paste0(max(grid_month_fire$ym) %/% 100, "-", max(grid_month_fire$ym) %% 100, "-01"))
+
+all_months <- tibble(date = seq.Date(start_date, end_date, by = "month")) %>%
+  mutate(year = year(date), month = month(date), ym = year * 100 + month) %>%
+  select(ym, year, month)
+
+#Creating every possible grid cell and month combination and adding that information to the grid_month_fire data set 
+panel <- crossing(all_grids, all_months) %>%
+  left_join(grid_month_fire, by = c("lat_bin", "lon_bin", "ym")) %>%
+  mutate(
+    n_fires = replace_na(n_fires, 0),
+    fire_this_month = replace_na(fire_this_month, 0)
+  )
+
+glimpse(panel)
+```
+
+##Prediction Target
+There is a binary indicator variable that represents the outcome for the fire in the next month for each (grid, month) space-time unit. If y_next = 1, then there is a notable fire that occurs in that grid cell in the next month and if y_next = 0 then no notable fire occurs. 
+
+```{r}
+panel <- panel %>%
+  arrange(lat_bin, lon_bin, ym) %>%
+  group_by(lat_bin, lon_bin) %>%
+  mutate(
+    y_next = lead(fire_this_month, n = 1L)
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(y_next))
+
+table(panel$y_next)
+```
+
+##Baseline Predictors
+The first predictor that will be used is state, which represents the US State in which the fire occurred. If there are multiple states that occurred in the grid, then the majority state is chosen 
+```{r}
+# Function that sorts all the states and finds the majority state and returns it
+mode_state <- function(x) {
+  names(sort(table(x), decreasing = TRUE))[1]
+}
+
+#Determining the majority state for each grid cell
+grid_state <- notable_fires %>% 
+  group_by(lat_bin, lon_bin) %>%
+  summarise(
+    state = as.factor(mode_state(STATE)),
+    .groups = "drop"
+  )
+
+#Add the state to the data set and output the result
+panel <- panel %>%
+  left_join(grid_state, by = c("lat_bin","lon_bin"))
+
+panel %>% select(state) %>% summary
+```
+The second predictor that will be used is seasonality. The months in the data set are represented numerically, so they are converted into sine and cosine features so that months that are further apart, like December and January, are also close numerically. 
+
+```{r}
+#Months are converted into sine and cosine
+panel <- panel %>%
+  mutate(
+    month_sin = sin(2 * pi * month / 12),
+    month_cos = cos(2 * pi * month / 12)
+  )
+
+#Output the month_sin and month_cos 
+panel %>% select('month_sin', 'month_cos') %>% head
+```
+
+The third predictor variable that is included is lagged fire history. This variable will include fire count lags, rolling fire counts, burn area lags, and rolling burn area. If multiple fire size appear within a (grid, month), the average will be calculated 
+
+```{r}
+#Calculating the average fire size if there are multiple that appear within a (grid, month)
+grid_fire_size <- notable_fires %>% 
+  group_by(lat_bin, lon_bin, ym) %>%
+  summarize(
+    fire_size = mean(FIRE_SIZE, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+#Join the grid_fire_size with the panel data set 
+panel <- panel %>%
+  left_join(grid_fire_size, by = c("lat_bin","lon_bin", "ym")) %>%
+  mutate(fire_size = coalesce(fire_size, 0))
+
+#Function that calculates the sum 
+rolling_sum <- function(x, k) {
+  output <- c()
+  for (i in 1:length(x)) {
+    if (i < k) {
+      output[i] <- NA
+    } else {
+      output[i] <- sum(x[(i-k+1):i], na.rm = TRUE)
+    }
+  }
+  output
+}
+
+#Constructing the lag and roll predictors 
+panel <- panel %>%
+  arrange(lat_bin, lon_bin, ym) %>%
+  group_by(lat_bin, lon_bin) %>% 
+  mutate(
+    fire_lag12  = replace_na(lag(n_fires, 12), 0),
+    fire_roll3  = slide_sum(n_fires,   before = 2,  after = 0),
+    fire_roll12 = slide_sum(n_fires,   before = 11, after = 0),
+    size_roll3  = slide_sum(fire_size, before = 2,  after = 0),
+    size_roll12 = slide_sum(fire_size, before = 11, after = 0)
+  ) %>%
+  ungroup() 
+
+#Select the required variables and output the summary
+panel %>% 
+  select("n_fires", "fire_lag12", "fire_roll3", "fire_roll12", 
+         "size_roll3", "size_roll12") %>%
+  summary
+
+```
+
+##Dataset Summary Table
+
+```{r}
+dataset_summary <- tibble(
+  n_rows = nrow(panel),
+  year_min = min(panel$year),
+  year_max = max(panel$year),
+  spatial_unit = "1° x 1° lat-lon grid (floor bins)",
+  temporal_unit = "monthly",
+  outcome = "y_next = 1 if any notable fire occurs in grid cell next month",
+  predictors = "lat_bin, lon_bin, state, month_cos, month_sin, year, 
+    n_fires, fire_lag12, fire_roll3, fire_roll12, 
+    size_roll3, size_roll12"
+)
+
+dataset_summary
+```
+
+### 2. Exploratory Data Analysis  
+
+The purpose of this section is to build intuition about the data and to justify modeling decisions.
+
+You may explore questions such as
+
+- How does wildfire incidence vary across space?
+- How strong is seasonality?
+- How do predictors differ between fire and non-fire observations?
+- Are there trends over time?
+
+In the Exploratory Data Analysis, the spatial and temporal patterns of notable wildfire activity will be explored and interpreted.
+
+##EDA Plot 1: Spatial Pattern
+```{r}
+#Creating a data frame with the fire rate, total number of fires, and number of observations 
+eda_spatial <- panel %>%
+  group_by(lat_bin, lon_bin) %>%
+  summarise(
+    fire_rate = mean(y_next),
+    total_fires = sum(n_fires),
+    observations = n(),
+    .groups = "drop"
+  )
+
+#Creating the plot 
+ggplot(eda_spatial, mapping = aes(x = lon_bin, y = lat_bin)) +
+  coord_quickmap(xlim = c(-125, -65), ylim = c(25, 50)) + 
+  geom_point(mapping = aes(color = fire_rate, size = total_fires), alpha = 0.5) + 
+  scale_color_viridis_c(name = "Mean Next Month Acitivity") +
+  labs(
+    title = "Spatial pattern: Next Month Wildfire 
+    Probability and Actvitiy across 
+    Grid Cells", x = "Longitude bin (floor)", y = "Latitude bin (floor)", fill = "Mean y_next"
+  )
+```
+
+
+##EDA Plot 2: Temporal Pattern
+```{r}
+#Creating the eda_month data frame
+eda_month <- panel %>%
+  group_by(month, year) %>%
+  summarize(
+    mean_y_next = mean(y_next),
+    .groups = "drop"
+  )
+
+#Converting the numbers into month names 
+eda_month <- eda_month %>%
+  mutate(month_name = case_when(
+    month == 1  ~ "Jan",
+    month == 2  ~ "Feb",
+    month == 3  ~ "Mar",
+    month == 4  ~ "Apr",
+    month == 5  ~ "May",
+    month == 6  ~ "Jun",
+    month == 7  ~ "Jul",
+    month == 8  ~ "Aug",
+    month == 9  ~ "Sep",
+    month == 10 ~ "Oct",
+    month == 11 ~ "Nov",
+    month == 12 ~ "Dec"
+  )) %>%
+  mutate(month_name = factor(month_name, levels = c("Jan","Feb","Mar","Apr","May","Jun", "Jul","Aug","Sep","Oct","Nov","Dec")))
+
+#Heatmap that shows the next month wildfire risk for each year and month 
+ggplot(eda_month, mapping = aes(x = month_name, y = year, fill = mean_y_next)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c(name = "y_next") +
+  labs(
+    title = "Seasonality: Wildfire Risk Trends Over Time",
+    x = "Month",
+    y = "Year"
+  )
+```
+
+
+
+### 3. Modeling
+
+In this section, you will specify and justify the predictive models. You must fit at least **two** models:
+
+1. **Baseline model.** A simple and interpretable model (e.g., logistic regression) that establishes a performance benchmark. Attend discussion session to get code for this baseline model!
+
+2. **Model of your choice.** This is the model that you choose, after careful examination of the dataset. Ideally, your model should outperform the baseline model. 
+   
+**Minimum required output:** Description of both the baseline model and the model of your choice.
+
+### 4. Model Fitting and Validation
+
+This section evaluates how well the models fit historical data and how they generalize over time. You need to use a proper validation method that respect the temporal structure. In other words, the model should avoid data leakage such as predicting outcomes in the past using models trained by future data. 
+
+The performance of the models should be evaluated by proper metrics. One required metric is the Area Under the ROC Curve (AUC). If AUC is not fully appropriate for your second model, you may include additional metrics, but AUC must still be reported for both models.
+
+
+**Minimum required output:** You must include at least one diagnostic plot (e.g., training loss over iterations, cross-validated AUC over time). 
+
+
+### 5. Summary
+
+This section summarizes the main findings and contributions of your project. You should summarize the key insights obtained from the exploratory data analysis and explain what your predictive model is able to capture. The discussion should be written for a general audience, emphasizing interpretation and practical understanding rather than technical detail.
+
+**Minimum required output:** Summary of EDA and model performance. 

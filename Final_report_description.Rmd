@@ -1,0 +1,308 @@
+---
+title: "STA 141A:  Predicting Wildfire Incidence in the United States"
+author: Abirami Valliammai Kathiresan
+output: html_document
+---
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+##Loading the Dataset and necessary libraries
+```{r}
+
+wildfires <-read.csv(file = "./Data/wildfires_sample_100k.csv")
+
+#Loading necessary libraries
+library(tidyverse)
+library(maps) # for map data
+library(lubridate) # for working with dates
+library(viridis) # for color scales
+```
+
+## Overview
+
+The goal of this final project is to develop a prediction model for the incidence and location of notable wildfires in the United States ([link](https://www.kaggle.com/datasets/rtatman/188-million-us-wildfires/data)). You will use historical wildfire records to estimate the probability that a wildfire will occur in a given geographic area during a future month.
+
+A full modeling pipeline is expected, including:
+- Careful problem formulation and data preprocessing  
+- Exploratory analysis to motivate modeling choices  
+- Predictive modeling with appropriate validation  
+- Clear interpretation and communication of results  
+
+Students are expected to submit a final written report, organized according to the sections described below. Each student is expected to write their own reproducible report, but discussion is encouraged. 
+
+---
+
+
+## Data and background
+
+You can find and download a subset of historical wildfire records derived from the Kaggle dataset *“188 Million US Wildfires”*. The dataset includes wildfire ignition locations, discovery dates, containment dates, and final burned area across the contiguous United States. You are encouraged, but not required, to use the full dataset from the original source. 
+
+Wildfires vary widely in size, and the vast majority of recorded fires are very small and quickly contained. Modeling all recorded fires would lead to extreme class imbalance and would obscure the dynamics of fires that are operationally and scientifically meaningful.
+
+To address this, you may filter the raw wildfire records to retain only “notable” fires. A recommended cutoff is to retain only the wildfires with final burned area $\geq$ 300 acres.  This threshold is consistent with operational wildfire reporting standards used by U.S. fire management agencies, where *large wildland fires* are commonly defined as: $\geq$ 100 acres in timber fuel models, or  $\geq$ 300 acres in grass or brush fuel models  
+
+**Alternative Cutoffs.** You may choose an alternative cutoff  if you clearly justify your choice. Any alternative cutoff must be clearly justified in writing and applied consistently throughout the project.  
+
+---
+
+## Prediction Task
+
+The prediction task is formulated as a binary classification problem with spatial and temporal structure.
+
+- **Outcome**  
+  For each spatial unit and month, define a binary variable indicating whether at least one notable wildfire occurs during that month.
+
+- **Spatial unit**  
+  You may choose an appropriate spatial unit (e.g., grid cells, counties, or other geographic partitions). The choice should balance spatial resolution, interpretability, and data sparsity. 
+
+- **Temporal unit**  
+  Month. You may refine your resolution to week or day with clear justification. 
+
+- **Predictors**  
+  You may select any variables in the dataset as your predictors. External data sources (e.g., weather or land cover) are allowed but not required.
+
+
+---
+
+## Report Structure and Required Sections
+
+
+Your final report must contain an **abstract** and the following **five** sections. 
+Each section should combine clear explanation, appropriate visual or tabular outputs, and interpretation. 
+
+You may add an optional Introduction or Background section to improve the exposition of the report. 
+
+
+### 1. Data Preprocessing
+
+This section should clearly explain how the raw wildfire data are transformed into the final dataset used for modeling.
+
+The report should explain
+- How notable fires are identified and filtered  
+- How space–time units are constructed (e.g., grid-by-month)  
+- How the binary outcome variable is defined  
+- How predictors are constructed or aggregated  
+- How missing data or edge cases are handled  
+
+**Minimum required output:** A summary table describing the final dataset used for predictive modeling. 
+
+
+The data preprocessing portion of this report will focus on transforming the raw wildfire data into a data set that is clean, structured, and usable for the necessary tasks. For instance, the spatial and temporal units will be clearly defined, notable fires will be identified, the binary oucome variable is fixed, and missing or unusual data is handled. 
+##Identifying Notable Wildfires
+The original wildfire dataset has rows of information with fires of various sizes, but the a majority of those fires are small in size and insignificant. Therefore, to ensure that these small fires will not obscure meaningful fire data or introduce a class imbalance, the data set has been reduced to notable fires, which have burned for 300 acres or more. Similarly, U.S. fire management agencies define large fires as 100 acres for timber fuel models and 300 acres for grass or brush fuel models. Therefore, all wildfire records that contain `FIRE_SIZE` >= 300 acres will be kept in the data set for analysis, while other fire records will be filtered out.
+
+
+##Constructing Space-Time Units
+The space-time units that this report will be focusing on is state-by-month. The chosen spatial unit is state since the State variable has 0 missing values, avoids sparsity that could result from smaller geographic units like grid cells, provides easy interpretability of results since there is a small number of states, and reduces the size of the data set to the most important attributes as well. The chosen temporal unit is calendar month as it indicates how changes in season and weather throughout the year impacts the number of wildfires. 
+
+```{r}
+#Table of missing values for each variable
+missing_values <- data.frame(
+  missing_count = colSums(is.na(wildfires))
+)
+
+#Including column of percent missing
+missing_values <- missing_values %>%
+  mutate(percent_missing = 100 * missing_count / nrow(wildfires)) %>%
+  arrange(desc(missing_count))
+
+print(missing_values)
+
+```
+
+##CHECK THIS SECTION
+REPLACE_NA FOR VALUES THAT DO NOT HAVE NOTABLE WILDFIRES?
+```{r}
+#Creating FIRE_DATE variable using FIRE_YEAR and DISCOVERY_DOY
+wildfires <- wildfires %>%
+    mutate(FIRE_DATE = as.Date(paste(FIRE_YEAR, DISCOVERY_DOY, sep = "-"), format = "%Y-%j"))
+
+#Extracting months and years from the discovery date variable
+wildfires <- wildfires %>%
+  mutate(MONTH = lubridate::month(FIRE_DATE),
+         YEAR = lubridate::year(FIRE_DATE))
+
+#Creating state-by-month units 
+fires_by_state_month <- wildfires %>%
+  group_by(STATE, MONTH, YEAR) %>%
+  summarize(fire_total = sum(FIRE_SIZE),
+            total_area = sum(FIRE_SIZE),
+            avg_size = mean(FIRE_SIZE, na.rm = TRUE),
+            WILDFIRE_BINARY = ifelse(sum(FIRE_SIZE >= 300) > 0, 1, 0),
+            .groups = "drop")
+head(fires_by_state_month)
+
+#Filtering data set to keep fire sizes that are greater than or equal to 300 acres only
+#wildfires <- wildfires %>%
+#  filter(FIRE_SIZE >= 300)
+#head(wildfires)
+
+n_distinct(fires_by_state_month$STATE)
+n_distinct(fires_by_state_month$YEAR)
+n_distinct(fires_by_state_month$MONTH)
+table(fires_by_state_month$MONTH)
+```
+
+##Defining Binary Outcome Variable
+The outcome of the prediction task is defined as a binary variable that reveals whether a notable fire occured at a certain month. The binary variable can be defined as Y = 1 if there is one notable wildfire that occurs in a state during that month and Y = 0 otherwise. This binary variable helps identify the occurrence and frequency of wildfire activity in a certain state at a certain month instead of predicting the number of fires taking place. 
+
+```{r}
+#Creating the binary outcome variable. Y = 1 if there is a wildfire that occurred during that month in a state and Y = 0 otherwise.
+#fires_by_state_month <- fires_by_state_month %>%
+#  mutate(WILDFIRE_BINARY = ifelse(fire_total > 0, 1, 0))
+
+```
+
+##Constructing predictors
+The initial wildfire data set contained records about individual fire events, but the prediction model must account for incidence and location of notable wildfires. Therefore, the predictor variables were constructed by aggregating wildfire attributes for each state-month unit. The predictors that will best predict the outcome include the number of fires (`fire_total`), total area burned by wildfires (`total_area`), and average size of wildfire (`avg_size`). `fire_total` was constructed by counting the number of rows with notable wildfires (> 300 acres) that happened in the same state and month. `total_area` is the sum of all fire sizes that occurred for the same state and month pair while `avg_size` is the average wildfire size for the same state and month pair. These variables effectively encapsulate and summarize the location, severity, and frequency of wildfire activity within each state for a specific month. They will also be meaningful predictors when modeling wildfire incidences to determine the probability of a wildfire occurring for a certain geographic area during a future month.
+
+##Missing Data and Edge Cases
+In order to handle the missing data and edge cases, the missing values for `FIRE_SIZE` are handled by removing all of them when calculating the total and average burned area so that these NA values did not impact the aggregation of predictors (na.rm = TRUE). Moreover, the `STATE` variable will have missing values if a state does not have any notable fires. These rows in the data set will be removed so those states will not be accounted for when predicting. When combining the state and month pairs, if there were outcomes where there were no notable fires that occurred, then it was assigned the binary value of 0. This ensures that there are cases with both notable and non-notable fires that occur for a certain state for a given month. Overall, the data set only contains minimum missing or null values, so they were handled according to the value that was missing. 
+
+##Summary Table of Final Data set
+SHOULD THIS BE BY HAND OR R CODE
+```{r}
+#Creating the summary table that includes the attributes of the final data set 
+range_years = 1 + max(fires_by_state_month$YEAR) - min(fires_by_state_month$YEAR)
+summary <- tibble(
+  Attributes = c("Spatial Unit", "Temporal Unit", "Outcome", "Predictors", "Notable Fire Size", "Range of Years", "Number of Observations", "Number of States"),
+  Description = c("State", "Month", "State-Month by Year", "fire_total, total_area, avg_size, MONTH", ">= 300 acres", range_years, nrow(fires_by_state_month), n_distinct(fires_by_state_month$STATE))
+)
+
+summary
+```
+
+
+### 2. Exploratory Data Analysis  
+
+The purpose of this section is to build intuition about the data and to justify modeling decisions.
+
+You may explore questions such as
+
+- How does wildfire incidence vary across space?
+- How strong is seasonality?
+- How do predictors differ between fire and non-fire observations?
+- Are there trends over time?
+
+
+**Minimum required output:** The report should include at least **two** exploratory plots that demonstrate the spatial and temporal patterns of wildfires. Each plot should be accompanied by a brief interpretation.
+
+##Plot 1: Distribution of Wildfires by State 
+```{r}
+#Group wildfires by state and calculate the total number of notable fires that have taken place in that state 
+fires_per_state <- fires_by_state_month %>%
+  group_by(STATE) %>%
+  summarize(
+    total_fires = sum(fire_total),
+    .groups = "drop"
+  )
+
+#Creating state abbreviations to match map_data and region with state name
+fires_per_state <- fires_per_state %>%
+  mutate(
+    state_abb = toupper(STATE),
+    region = tolower(state.name[match(state_abb, state.abb)])
+  )
+
+#Combine fire data with map data
+map_info <- map_data("state")
+map_df <- map_info %>%
+  left_join(fires_per_state, by = c("region" = "region"))
+
+#Creating the plot for spatial distribution
+ggplot(map_df) +
+  geom_polygon(mapping = aes(long, lat, group = group, fill = total_fires)) +
+  scale_fill_viridis_c(name = "Total Notable Fires", direction = -1) +
+  labs(
+    title = "Spatial Distribution of Notable Wildfires by State",
+    x = "Longitude",
+    y = "Latitude"
+  )
+```
+This is a plot that shows the spatial distribution of notable wildfires across the states in the U.S. and the darker colors indicate a higher number of wildfires. The output indicates that there is a lot of variation of wildifire incidence across states because states in the West and Southwest regions of the U.S., like Texas and California seem to have a high number of wildfires. On the other hand, a majority of states in the East have a low number of total fires as they are lighter in color. These differences may be due to the variation in climate and environmental conditions that typically drive wildfires. The spatial variation shows how geographic location is an important predictor for wildfire occurrence since there are certain regions that have a higher number of wildfires that others. The geographic patterns indicates that there may be a nonlinear interaction occurring between the location variable and other predictors. Thus, there needs to be a more flexible and dynamic model used for prediction to capture the complex underlying relationships of the predictors.
+
+##Plot 2: Number of Notable Wildfires for each Month and Year 
+HOW TO MAKE EVERYTHING THE SAME ORDER?
+HOW TO GET THE LINE TO APPEAR
+TALK DIRECTLY ABOUT LOGISTIC REGRESSION AND RANDOM FOREST CLASSIFIER HERE?
+```{r}
+#Group by month to compute the total number of fires per month
+fires_per_month <- fires_by_state_month %>%
+  group_by(MONTH) %>%
+  summarize(
+    total_fires = sum(fire_total),
+    .groups = "drop"
+  )
+
+#Convert the numbers into month names
+fires_per_month <- fires_per_month %>%
+  mutate(
+    MONTH_NAME = case_when(
+      MONTH == 1 ~ "Jan",
+      MONTH == 2 ~ "Feb",
+      MONTH == 3 ~ "Mar",
+      MONTH == 4 ~ "Apr",
+      MONTH == 5 ~ "May",
+      MONTH == 6 ~ "Jun",
+      MONTH == 7 ~ "Jul",
+      MONTH == 8 ~ "Aug",
+      MONTH == 9 ~ "Sep",
+      MONTH == 10 ~ "Oct",
+      MONTH == 11 ~ "Nov",
+      MONTH == 12 ~ "Dec"
+    )
+  )
+
+#Plot the number of fires for each month
+ggplot(fires_per_month, mapping = aes(x = MONTH_NAME, y = total_fires)) +
+  geom_col(fill = "blue", color = "black") +
+  geom_line() +
+  geom_smooth(se = FALSE, color = "red") +
+  labs(
+    title = "Seasonal Distribution of Notable Wildfires", x = "Month", y = "Total Number of Notable Wildfires"
+  ) +
+  theme_minimal()
+```
+The plot is a bar chart that shows the total number of notable wildfires that occurred during each month across all years. The graph reveals that there are certain months that have higher wildfire activity than other months. For instance, August, July, and June have the highest number of wildfire incidences. This corroborates with the fact that the climate is hotter during these months with drier vegetation, which increases the chances of wildfires. On the other hand, winter months, like October, November, and September have the smallest number of notable wildfires. This is due to the fact that a cooler climate makes it more difficult for wildfires to occur. The seasonal pattern displayed by this graph indicates that the month of the year is an important predictor of wildfire occurrence. The seasonal patterns would interact with other geographic attributes and wildfire characteristics in nonlinear and complicated ways, which means that a more dynamic and flexible model must be used to represent those complex relationships between predictors and wildfire incidence. 
+
+### 3. Modeling
+
+In this section, you will specify and justify the predictive models. You must fit at least **two** models:
+
+1. **Baseline model.** A simple and interpretable model (e.g., logistic regression) that establishes a performance benchmark. Attend discussion session to get code for this baseline model!
+
+2. **Model of your choice.** This is the model that you choose, after careful examination of the dataset. Ideally, your model should outperform the baseline model. 
+   
+**Minimum required output:** Description of both the baseline model and the model of your choice.
+
+##Baseline Model
+The goal is to determine whether a notable fire occurs in a state for a specific month and the outcome is a binary variable with 1 if there is a notable wildfire and 0 otherwise. Logistic regression is the best model for the baseline because it best address binary classification. Also, it is a simple and straightforward model that will make it easy to interpret the results, coefficients, and predictor influence. 
+
+DOES TRAIN AND TEST SPLIT GO HERE OR IN THE NEXT SECTION
+```{r}
+#Fitting the baseline logistic regression model
+baseline <- glm(WILDFIRE_BINARY ~ MONTH + STATE + total_area + avg_size, data = fires_by_state_month, family = "binomial")
+
+summary(baseline)
+
+```
+
+### 4. Model Fitting and Validation
+IS THIS WHERE TRAIN AND TEST SPLIT GO?
+This section evaluates how well the models fit historical data and how they generalize over time. You need to use a proper validation method that respect the temporal structure. In other words, the model should avoid data leakage such as predicting outcomes in the past using models trained by future data. 
+
+The performance of the models should be evaluated by proper metrics. One required metric is the Area Under the ROC Curve (AUC). If AUC is not fully appropriate for your second model, you may include additional metrics, but AUC must still be reported for both models.
+
+
+**Minimum required output:** You must include at least one diagnostic plot (e.g., training loss over iterations, cross-validated AUC over time). 
+
+
+### 5. Summary
+
+This section summarizes the main findings and contributions of your project. You should summarize the key insights obtained from the exploratory data analysis and explain what your predictive model is able to capture. The discussion should be written for a general audience, emphasizing interpretation and practical understanding rather than technical detail.
+
+**Minimum required output:** Summary of EDA and model performance. 

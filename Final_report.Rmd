@@ -345,7 +345,7 @@ Predictors:
 
 - Group 2 (Seasonal): Month and Year 
 
-- Group 3 (Lagged Fire History): fire count this month (short-term persistence), fire count lag 12 (seasonal recurrence), rolling fire counts over past 3 months (recent intensity), rolling fire counts over the past 12 months (long-term activity), rolling average fire size over past 3 months, rolling average fire size over past 3 months, and total number of fires 
+- Group 3 (Lagged Fire History): fire count this month (short-term persistence), fire count lag 12 (seasonal recurrence), rolling fire counts over past 3 months (recent intensity), rolling fire counts over the past 12 months (long-term activity), rolling average fire size over past 3 months, and rolling average fire size over past 12 months 
 
 - Group 4 (Fire Attributes): fire cause (natural, human, infrastructure), average fire duration, and land ownership type (federal, public, private)
 
@@ -525,7 +525,7 @@ The gradient boosting model aims to minimize the following function:
 $$
 L = \sum_{i=1}^{n} l(y_i, \hat{y}_i) + \sum_{k=1}^{K} \Omega(f_k)
 $$
-For the XGBoost equation, the loss function is represented as L, the predicted probability is ŷi, and Ω(fk) is the regularization term that ensures that additional trees are penalized so the model does not overfit the data. The XGBoost model will add more trees to minimize this function, which will allow it to capture the underlying nonlinear trends in the wildfire data and allow the model to make accurate predictions
+For the XGBoost equation, the loss function is represented as L, the predicted probability is ŷi, and Ω(fk) is the regularization term that ensures that additional trees are penalized so the model does not overfit the data. The XGBoost model will iteratively add more trees to minimize this function, which will allow it to capture the underlying nonlinear trends in the wildfire data and allow the model to make accurate predictions
 
 ### 4. Model Fitting and Validation
 

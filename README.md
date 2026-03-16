@@ -1,5 +1,6 @@
 # Predicting Wildfire Activity in the United States 
 Author: Abirami Valliammai Kathiresan
+
 Course: STA 141A
 
 ## Overview

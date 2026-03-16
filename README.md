@@ -9,8 +9,11 @@ Historical wildfire data is transformed to create records of 1° × 1° geograph
 
 ## Dataset 
 Spatial Variables: latitude, longitude, state
+
 Temporal Variables: month, year
+
 Lagged Fire History Variables: fire count this month, fire count lag 12, rolling fire counts over past 3 months, rolling fire counts over the past 12 months, rolling average fire size over past 3 months, and rolling average fire size over past 12 months.
+
 Fire Attirbute Variables: fire cause (natural, human, infrastructure), average fire duation, land ownership type (federal, public, private)
 
 ## Model Fitting
